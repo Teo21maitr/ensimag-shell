@@ -13,7 +13,7 @@ enable_testing()
 # Vous devez editer la ligne SET suivante pour y mettre le numéro de
 # la variante que vous avez choisi
 #########
-set(VARIANTE_SUJET -1)
+set(VARIANTE_SUJET 0)
 ### FIN de la zone à éditer / END of the two line area to edit
 
 
