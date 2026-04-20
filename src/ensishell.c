@@ -50,6 +50,33 @@ SCM executer_wrapper(SCM x)
 #endif
 
 
+#define MAX_JOBS 64
+
+typedef struct { pid_t pid; char *cmd; } job_t;
+static job_t jobs[MAX_JOBS];
+static int njobs = 0;
+
+static void add_job(pid_t pid, char *cmd) {
+	if (njobs < MAX_JOBS) {
+		jobs[njobs].pid = pid;
+		jobs[njobs].cmd = strdup(cmd);
+		njobs++;
+	}
+}
+
+static void print_jobs(void) {
+	int i = 0;
+	while (i < njobs) {
+		if (waitpid(jobs[i].pid, NULL, WNOHANG) > 0) {
+			free(jobs[i].cmd);
+			jobs[i] = jobs[--njobs];
+		} else {
+			printf("[%d] %s\n", jobs[i].pid, jobs[i].cmd);
+			i++;
+		}
+	}
+}
+
 void terminate(char *line) {
 #if USE_GNU_READLINE == 1
 	/* rl_clear_history() does not exist yet in centOS 6 */
@@ -121,13 +148,21 @@ int main() {
 			continue;
 
 		char **cmd = l->seq[0];
+
+		if (!strcmp(cmd[0], "jobs")) {
+			print_jobs();
+			continue;
+		}
+
 		pid_t pid = fork();
 		if (pid == 0) {
 			execvp(cmd[0], cmd);
 			perror(cmd[0]);
 			exit(1);
 		}
-		if (!l->bg)
+		if (l->bg)
+			add_job(pid, cmd[0]);
+		else
 			waitpid(pid, NULL, 0);
 	}
 
