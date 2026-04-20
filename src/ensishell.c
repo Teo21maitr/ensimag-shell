@@ -127,6 +127,8 @@ int main() {
 			perror(cmd[0]);
 			exit(1);
 		}
+		if (!l->bg)
+			waitpid(pid, NULL, 0);
 	}
 
 }
