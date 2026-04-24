@@ -11,6 +11,7 @@
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <fcntl.h>
 
 #include "variante.h"
 #include "readcmd.h"
@@ -30,16 +31,20 @@
 
 int question6_executer(char *line)
 {
-	/* Question 6: Insert your code to execute the command line
-	 * identically to the standard execution scheme:
-	 * parsecmd, then fork+execvp, for a single command.
-	 * pipe and i/o redirection are not required.
-	 */
-	printf("Not implemented yet: can not execute %s\n", line);
+	struct cmdline *l = parsecmd(&line);
+	if (!l || l->err || l->seq[0] == NULL)
+		return 0;
 
-	/* Remove this line when using parsecmd as it will free it */
-	free(line);
-	
+	char **cmd = l->seq[0];
+	pid_t pid = fork();
+	if (pid == 0) {
+		if (l->in) redir_in(l->in);
+		if (l->out) redir_out(l->out);
+		execvp(cmd[0], cmd);
+		perror(cmd[0]);
+		exit(1);
+	}
+	waitpid(pid, NULL, 0);
 	return 0;
 }
 
@@ -55,6 +60,21 @@ SCM executer_wrapper(SCM x)
 typedef struct { pid_t pid; char *cmd; } job_t;
 static job_t jobs[MAX_JOBS];
 static int njobs = 0;
+
+static void redir_in(const char *file) {
+	int fd = open(file, O_RDONLY);
+	if (fd < 0) { perror(file); exit(1); }
+	dup2(fd, STDIN_FILENO);
+	close(fd);
+}
+
+static void redir_out(const char *file) {
+	int fd = open(file, O_WRONLY | O_CREAT, 0644);
+	if (fd < 0) { perror(file); exit(1); }
+	ftruncate(fd, 0);
+	dup2(fd, STDOUT_FILENO);
+	close(fd);
+}
 
 static void add_job(pid_t pid, char *cmd) {
 	if (njobs < MAX_JOBS) {
@@ -154,16 +174,50 @@ int main() {
 			continue;
 		}
 
-		pid_t pid = fork();
-		if (pid == 0) {
-			execvp(cmd[0], cmd);
-			perror(cmd[0]);
-			exit(1);
+		if (l->seq[1] != NULL) {
+			int fd[2];
+			pipe(fd);
+
+			pid_t pid1 = fork();
+			if (pid1 == 0) {
+				if (l->in) redir_in(l->in);
+				dup2(fd[1], STDOUT_FILENO);
+				close(fd[0]); close(fd[1]);
+				execvp(l->seq[0][0], l->seq[0]);
+				perror(l->seq[0][0]); exit(1);
+			}
+
+			pid_t pid2 = fork();
+			if (pid2 == 0) {
+				dup2(fd[0], STDIN_FILENO);
+				close(fd[0]); close(fd[1]);
+				if (l->out) redir_out(l->out);
+				execvp(l->seq[1][0], l->seq[1]);
+				perror(l->seq[1][0]); exit(1);
+			}
+
+			close(fd[0]); close(fd[1]);
+			if (l->bg) {
+				add_job(pid1, l->seq[0][0]);
+				add_job(pid2, l->seq[1][0]);
+			} else {
+				waitpid(pid1, NULL, 0);
+				waitpid(pid2, NULL, 0);
+			}
+		} else {
+			pid_t pid = fork();
+			if (pid == 0) {
+				if (l->in) redir_in(l->in);
+				if (l->out) redir_out(l->out);
+				execvp(cmd[0], cmd);
+				perror(cmd[0]);
+				exit(1);
+			}
+			if (l->bg)
+				add_job(pid, cmd[0]);
+			else
+				waitpid(pid, NULL, 0);
 		}
-		if (l->bg)
-			add_job(pid, cmd[0]);
-		else
-			waitpid(pid, NULL, 0);
 	}
 
 }
