@@ -12,6 +12,8 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <fcntl.h>
+#include <wordexp.h>
+#include <sys/resource.h>
 
 #include "variante.h"
 #include "readcmd.h"
@@ -31,6 +33,34 @@
 typedef struct { pid_t pid; char *cmd; } job_t;
 static job_t jobs[MAX_JOBS];
 static int njobs = 0;
+static int cpu_limit = 0;
+
+static char **expand_cmd(char **cmd) {
+	int total = 0;
+	wordexp_t we;
+	for (int i = 0; cmd[i]; i++) {
+		if (wordexp(cmd[i], &we, 0) == 0) {
+			total += we.we_wordc;
+			wordfree(&we);
+		} else {
+			total++;
+		}
+	}
+	char **result = malloc((total + 1) * sizeof(char *));
+	int k = 0;
+	for (int i = 0; cmd[i]; i++) {
+		if (wordexp(cmd[i], &we, 0) == 0) {
+			for (size_t j = 0; j < we.we_wordc; j++)
+				result[k++] = strdup(we.we_wordv[j]);
+			wordfree(&we);
+		} else {
+			result[k++] = strdup(cmd[i]);
+		}
+	}
+	result[k] = NULL;
+	return result;
+}
+
 
 static void redir_in(const char *file) {
 	int fd = open(file, O_RDONLY);
@@ -173,26 +203,41 @@ int main() {
 			continue;
 		}
 
+		if (!strcmp(cmd[0], "ulimit") && cmd[1]) {
+			cpu_limit = atoi(cmd[1]);
+			continue;
+		}
+
 		if (l->seq[1] != NULL) {
 			int fd[2];
 			pipe(fd);
 
 			pid_t pid1 = fork();
 			if (pid1 == 0) {
+				if (cpu_limit > 0) {
+					struct rlimit rl = { cpu_limit, cpu_limit + 5 };
+					setrlimit(RLIMIT_CPU, &rl);
+				}
 				if (l->in) redir_in(l->in);
 				dup2(fd[1], STDOUT_FILENO);
 				close(fd[0]); close(fd[1]);
-				execvp(l->seq[0][0], l->seq[0]);
-				perror(l->seq[0][0]); exit(1);
+				char **ecmd = expand_cmd(l->seq[0]);
+				execvp(ecmd[0], ecmd);
+				perror(ecmd[0]); exit(1);
 			}
 
 			pid_t pid2 = fork();
 			if (pid2 == 0) {
+				if (cpu_limit > 0) {
+					struct rlimit rl = { cpu_limit, cpu_limit + 5 };
+					setrlimit(RLIMIT_CPU, &rl);
+				}
 				dup2(fd[0], STDIN_FILENO);
 				close(fd[0]); close(fd[1]);
 				if (l->out) redir_out(l->out);
-				execvp(l->seq[1][0], l->seq[1]);
-				perror(l->seq[1][0]); exit(1);
+				char **ecmd = expand_cmd(l->seq[1]);
+				execvp(ecmd[0], ecmd);
+				perror(ecmd[0]); exit(1);
 			}
 
 			close(fd[0]); close(fd[1]);
@@ -206,10 +251,15 @@ int main() {
 		} else {
 			pid_t pid = fork();
 			if (pid == 0) {
+				if (cpu_limit > 0) {
+					struct rlimit rl = { cpu_limit, cpu_limit + 5 };
+					setrlimit(RLIMIT_CPU, &rl);
+				}
 				if (l->in) redir_in(l->in);
 				if (l->out) redir_out(l->out);
-				execvp(cmd[0], cmd);
-				perror(cmd[0]);
+				char **ecmd = expand_cmd(cmd);
+				execvp(ecmd[0], ecmd);
+				perror(ecmd[0]);
 				exit(1);
 			}
 			if (l->bg)
