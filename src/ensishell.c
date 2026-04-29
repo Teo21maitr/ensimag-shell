@@ -26,6 +26,27 @@
  * lines in CMakeLists.txt.
  */
 
+#define MAX_JOBS 64
+
+typedef struct { pid_t pid; char *cmd; } job_t;
+static job_t jobs[MAX_JOBS];
+static int njobs = 0;
+
+static void redir_in(const char *file) {
+	int fd = open(file, O_RDONLY);
+	if (fd < 0) { perror(file); exit(1); }
+	dup2(fd, STDIN_FILENO);
+	close(fd);
+}
+
+static void redir_out(const char *file) {
+	int fd = open(file, O_WRONLY | O_CREAT, 0644);
+	if (fd < 0) { perror(file); exit(1); }
+	ftruncate(fd, 0);
+	dup2(fd, STDOUT_FILENO);
+	close(fd);
+}
+
 #if USE_GUILE == 1
 #include <libguile.h>
 
@@ -53,28 +74,6 @@ SCM executer_wrapper(SCM x)
         return scm_from_int(question6_executer(scm_to_locale_stringn(x, 0)));
 }
 #endif
-
-
-#define MAX_JOBS 64
-
-typedef struct { pid_t pid; char *cmd; } job_t;
-static job_t jobs[MAX_JOBS];
-static int njobs = 0;
-
-static void redir_in(const char *file) {
-	int fd = open(file, O_RDONLY);
-	if (fd < 0) { perror(file); exit(1); }
-	dup2(fd, STDIN_FILENO);
-	close(fd);
-}
-
-static void redir_out(const char *file) {
-	int fd = open(file, O_WRONLY | O_CREAT, 0644);
-	if (fd < 0) { perror(file); exit(1); }
-	ftruncate(fd, 0);
-	dup2(fd, STDOUT_FILENO);
-	close(fd);
-}
 
 static void add_job(pid_t pid, char *cmd) {
 	if (njobs < MAX_JOBS) {
